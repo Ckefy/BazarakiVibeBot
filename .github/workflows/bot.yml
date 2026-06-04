@@ -2,8 +2,10 @@ name: bazaraki-bot
 
 on:
   schedule:
-    # Every 15 minutes. GitHub may delay scheduled runs under load.
-    - cron: "*/15 * * * *"
+    # Hourly — fits ScrapingAnt's free tier (~1000 datacenter requests/month).
+    # Lower to "*/30 * * * *" etc. only if you upgrade the scraping plan.
+    # GitHub may delay scheduled runs under load.
+    - cron: "0 * * * *"
   workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
 
 # Never run two instances at once — they'd fight over state.json / Telegram updates.

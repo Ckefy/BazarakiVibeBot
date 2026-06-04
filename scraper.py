@@ -84,7 +84,9 @@ def _build_service_url(provider, url, api_key):
 
     if provider == "scrapingant":
         # browser=true renders JS; residential proxy is needed to pass Cloudflare.
-        proxy_type = (os.environ.get("SCRAPER_PROXY_TYPE") or "residential")
+        # datacenter is ~25x cheaper in credits and currently passes Bazaraki's
+        # Cloudflare; switch to "residential" via SCRAPER_PROXY_TYPE if it ever 403s.
+        proxy_type = (os.environ.get("SCRAPER_PROXY_TYPE") or "datacenter")
         return "https://api.scrapingant.com/v2/general?" + urllib.parse.urlencode({
             "url": url, "x-api-key": api_key, "browser": "true", "proxy_type": proxy_type,
         })
