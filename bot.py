@@ -12,6 +12,7 @@ Requires the TELEGRAM_BOT_TOKEN environment variable.
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -30,6 +31,12 @@ MAX_SEND_PER_RUN = 15   # avoid flooding on a single run
 # Telegram updates are handled on every run (cheap, keeps the bot responsive),
 # but the Bazaraki search runs at most once per this interval (saves credits).
 POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES") or "60")
+
+# If > 0, keep long-polling Telegram for this many seconds before exiting (near
+# real-time replies). The cron restarts the job to give continuous coverage.
+# 0 = single-shot (process pending updates once and exit).
+LOOP_SECONDS = int(os.environ.get("LOOP_SECONDS") or "0")
+LONG_POLL_TIMEOUT = 25  # seconds Telegram holds the getUpdates connection
 
 # Quiet hours (Cyprus local time): no Bazaraki/scraping-API requests in this window.
 QUIET_START = int(os.environ.get("QUIET_START_HOUR") or "1")   # 01:00
@@ -60,15 +67,25 @@ def main():
         print("ERROR: TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
     state = load_state()
-    process_updates(state)
-    poll_subscriptions(state)
-    save_state(state)
+
+    if LOOP_SECONDS <= 0:
+        process_updates(state)
+        poll_subscriptions(state)
+        save_state(state)
+        return
+
+    # Long-poll loop: replies are near-instant; the search stays rate-limited.
+    deadline = time.monotonic() + LOOP_SECONDS
+    while time.monotonic() < deadline:
+        process_updates(state, long_poll=LONG_POLL_TIMEOUT)
+        poll_subscriptions(state)
+        save_state(state)
 
 
 # --- Telegram API ------------------------------------------------------------
 
-def tg(method, **params):
-    resp = requests.post("{}/{}".format(API, method), json=params, timeout=40)
+def tg(method, _http_timeout=40, **params):
+    resp = requests.post("{}/{}".format(API, method), json=params, timeout=_http_timeout)
     data = resp.json()
     if not data.get("ok"):
         print("Telegram API error on {}: {}".format(method, data), file=sys.stderr)
@@ -92,9 +109,11 @@ def sub_keyboard(sub_id):
 
 # --- handling incoming updates ----------------------------------------------
 
-def process_updates(state):
+def process_updates(state, long_poll=0):
     offset = state.get("update_offset", 0)
-    result = tg("getUpdates", offset=offset + 1, timeout=0, allowed_updates=["message", "callback_query"])
+    result = tg("getUpdates", offset=offset + 1, timeout=long_poll,
+                allowed_updates=["message", "callback_query"],
+                _http_timeout=long_poll + 15)
     updates = result.get("result", []) if result.get("ok") else []
 
     for upd in updates:

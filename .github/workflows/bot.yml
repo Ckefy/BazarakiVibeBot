@@ -2,10 +2,11 @@ name: bazaraki-bot
 
 on:
   schedule:
-    # Hourly — fits ScrapingAnt's free tier (~1000 datacenter requests/month).
-    # Lower to "*/30 * * * *" etc. only if you upgrade the scraping plan.
-    # GitHub may delay scheduled runs under load.
-    - cron: "0 * * * *"
+    # Every 5 min (GitHub's minimum). Each run long-polls Telegram for ~4.5 min
+    # (LOOP_SECONDS) for near real-time replies; the Bazaraki search itself is
+    # rate-limited in code to once per hour. Needs a PUBLIC repo (unlimited
+    # Actions minutes) — on a private repo this would blow past the free 2000 min.
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
 
 # Never run two instances at once — they'd fight over state.json / Telegram updates.
@@ -19,6 +20,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 6   # safety cap; the loop self-exits after LOOP_SECONDS
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +39,7 @@ jobs:
           SCRAPER_PROXY_TYPE: ${{ vars.SCRAPER_PROXY_TYPE }}     # optional: datacenter(default)/residential
           QUIET_START_HOUR: ${{ vars.QUIET_START_HOUR }}         # optional, Cyprus time, default 1
           QUIET_END_HOUR: ${{ vars.QUIET_END_HOUR }}             # optional, Cyprus time, default 6
+          LOOP_SECONDS: "270"                                    # long-poll ~4.5 min per run, then exit
         run: python bot.py
 
       - name: Persist state
