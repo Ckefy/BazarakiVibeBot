@@ -40,6 +40,7 @@ jobs:
           QUIET_START_HOUR: ${{ vars.QUIET_START_HOUR }}         # optional, Cyprus time, default 1
           QUIET_END_HOUR: ${{ vars.QUIET_END_HOUR }}             # optional, Cyprus time, default 6
           LOOP_SECONDS: "270"                                    # long-poll ~4.5 min per run, then exit
+          POLL_INTERVAL_MINUTES: ${{ vars.POLL_INTERVAL_MINUTES }}  # optional, default 60
         run: python bot.py
 
       - name: Persist state
