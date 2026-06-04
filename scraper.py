@@ -30,6 +30,23 @@ _UA = (
 )
 
 
+def normalize_search_url(url):
+    """Force newest-first first page so we never miss new listings on later pages.
+
+    - adds ordering=newest only if the user didn't set an ordering themselves;
+    - drops any `page` param so we always read page 1 (the freshest results);
+    - preserves all other params, including empty ones (lat=&lng=&radius=).
+    """
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query = [(k, v) for k, v in query if k != "page"]
+    if not any(k == "ordering" for k, _ in query):
+        query.append(("ordering", "newest"))
+    new_query = urllib.parse.urlencode(query)
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+
+
 def fetch_listings(url):
     """Return a list of (listing_id:int, full_url:str) in page order (newest first).
 
@@ -37,7 +54,7 @@ def fetch_listings(url):
     "similar"/"recommended" carousels with unrelated ads (e.g. studios in a
     3-bedroom search); those live OUTSIDE the results container and are ignored.
     """
-    html_text = _get_html(url)
+    html_text = _get_html(normalize_search_url(url))
     if _looks_like_challenge(html_text):
         raise RuntimeError("Cloudflare challenge was not solved (blocked).")
     return _parse_listings(html_text)

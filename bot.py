@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from scraper import fetch_listings
+from scraper import fetch_listings, normalize_search_url
 from storage import load_state, save_state
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -150,6 +150,7 @@ def handle_callback(state, callback):
 
 
 def create_subscription(state, chat_id, url):
+    url = normalize_search_url(url)
     for sub in state["subscriptions"]:
         if sub["chat_id"] == chat_id and sub["url"] == url and sub["active"]:
             send(chat_id, "Ты уже подписан на этот поиск 🙂", keyboard=sub_keyboard(sub["id"]))
