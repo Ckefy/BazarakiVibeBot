@@ -1,10 +1,19 @@
 """Fetch a Bazaraki search page and extract listing links.
 
 Bazaraki sits behind Cloudflare's "managed challenge", so a plain HTTP request
-returns 403 ("Just a moment..."). We use cloudscraper to solve the JS challenge.
-As a fallback (useful when running from datacenter IPs such as GitHub Actions,
-which Cloudflare blocks more aggressively) a scraping-API can be used by setting
-the SCRAPER_API_KEY environment variable.
+returns 403 ("Just a moment..."). Two fetch strategies are supported:
+
+1. Local / residential IP: cloudscraper solves the JS challenge directly.
+   Used automatically when SCRAPER_API_KEY is NOT set.
+
+2. Datacenter IP (e.g. GitHub Actions, which Cloudflare blocks): route the
+   request through a scraping service that provides clean proxies + a real
+   browser. Activated by setting SCRAPER_API_KEY. Pick the service with
+   SCRAPER_PROVIDER (default: scrapingant). Supported:
+     - scrapingant  (https://scrapingant.com)
+     - scraperapi   (https://scraperapi.com)
+     - scrapingbee  (https://scrapingbee.com)
+     - custom       (provide SCRAPER_URL_TEMPLATE with {key} and {url})
 """
 import os
 import re
@@ -47,7 +56,7 @@ def fetch_listings(url):
 def _get_html(url):
     api_key = os.environ.get("SCRAPER_API_KEY", "").strip()
     if api_key:
-        return _get_via_scraper_api(url, api_key)
+        return _get_via_service(url, api_key)
     return _get_via_cloudscraper(url)
 
 
@@ -62,14 +71,41 @@ def _get_via_cloudscraper(url):
     return response.text
 
 
-def _get_via_scraper_api(url, api_key):
-    # ScraperAPI-compatible endpoint: renders the page and bypasses Cloudflare.
-    api_url = "http://api.scraperapi.com/?" + urllib.parse.urlencode(
-        {"api_key": api_key, "url": url, "render": "true"}
-    )
-    response = requests.get(api_url, headers={"User-Agent": _UA}, timeout=90)
+def _get_via_service(url, api_key):
+    provider = os.environ.get("SCRAPER_PROVIDER", "scrapingant").strip().lower()
+    endpoint = _build_service_url(provider, url, api_key)
+    response = requests.get(endpoint, headers={"User-Agent": _UA}, timeout=120)
     response.raise_for_status()
     return response.text
+
+
+def _build_service_url(provider, url, api_key):
+    enc = lambda v: urllib.parse.quote(v, safe="")
+
+    if provider == "scrapingant":
+        # browser=true renders JS; residential proxy is needed to pass Cloudflare.
+        proxy_type = os.environ.get("SCRAPER_PROXY_TYPE", "residential")
+        return "https://api.scrapingant.com/v2/general?" + urllib.parse.urlencode({
+            "url": url, "x-api-key": api_key, "browser": "true", "proxy_type": proxy_type,
+        })
+
+    if provider == "scraperapi":
+        return "https://api.scraperapi.com/?" + urllib.parse.urlencode({
+            "api_key": api_key, "url": url, "render": "true", "ultra_premium": "true",
+        })
+
+    if provider == "scrapingbee":
+        return "https://app.scrapingbee.com/api/v1/?" + urllib.parse.urlencode({
+            "api_key": api_key, "url": url, "render_js": "true", "stealth_proxy": "true",
+        })
+
+    if provider == "custom":
+        template = os.environ.get("SCRAPER_URL_TEMPLATE", "")
+        if not template:
+            raise RuntimeError("SCRAPER_PROVIDER=custom requires SCRAPER_URL_TEMPLATE")
+        return template.format(key=enc(api_key), url=enc(url))
+
+    raise RuntimeError("Unknown SCRAPER_PROVIDER: {}".format(provider))
 
 
 def _looks_like_challenge(html_text):

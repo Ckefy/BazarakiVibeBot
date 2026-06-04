@@ -78,15 +78,29 @@ Workflow `bazaraki-bot` запускается каждые 15 минут. Мо�
   и новые объявления — не мгновенная (обычно в пределах 15–25 минут). Хочешь чаще —
   поменяй `*/15` на `*/10` или `*/5` в `.github/workflows/bot.yml`.
 
-- **Cloudflare и IP дата-центра.** `cloudscraper` отлично пробивает челлендж с
-  «домашних» IP, но IP-адреса GitHub Actions — дата-центровые, и Cloudflare режет их
-  жёстче. Если в логах Actions появится ошибка `Cloudflare challenge was not solved`,
-  есть два пути:
-  1. Завести бесплатный ключ на scraping-сервисе (например, [ScraperAPI](https://www.scraperapi.com))
-     и добавить его секретом `SCRAPER_API_KEY` — бот автоматически начнёт ходить через него.
-     На бесплатном тарифе держи интервал `*/15` или реже, чтобы не выйти за квоту.
-  2. Запускать бота не на GitHub Actions, а на своём «домашнем» железе (см. ниже) —
-     там IP residential и Cloudflare пропускает.
+- **Cloudflare и IP дата-центра.** `cloudscraper` пробивает челлендж с «домашних»
+  IP, но IP-адреса GitHub Actions — дата-центровые, и Cloudflare их блокирует (`403`).
+  Поэтому на Actions нужно ходить через scraping-сервис: задай секрет `SCRAPER_API_KEY`,
+  и бот начнёт ходить через сервис вместо cloudscraper. Сервис выбирается переменной
+  `SCRAPER_PROVIDER`:
+
+  | `SCRAPER_PROVIDER` | Сервис | Доп. переменные |
+  |--------------------|--------|-----------------|
+  | `scrapingant` (по умолчанию) | [ScrapingAnt](https://scrapingant.com) | `SCRAPER_PROXY_TYPE` (по умолч. `residential`) |
+  | `scraperapi` | [ScraperAPI](https://scraperapi.com) | — |
+  | `scrapingbee` | [ScrapingBee](https://scrapingbee.com) | — |
+  | `custom` | любой | `SCRAPER_URL_TEMPLATE` с `{key}` и `{url}` |
+
+  Перед тем как полагаться на Actions, проверь ключ локально:
+  ```bash
+  export SCRAPER_API_KEY="..." SCRAPER_PROVIDER="scrapingant"
+  python check_service.py
+  ```
+  Должно напечатать `OK — parsed N listings`.
+
+  ⚠️ Обход Cloudflare тратит много кредитов, бесплатных тарифов хватает на нечастый
+  опрос. Если кредиты кончаются — увеличь интервал в `bot.yml` (например, `0 * * * *`
+  — раз в час). Расход смотри в дашборде сервиса.
 
 ---
 
