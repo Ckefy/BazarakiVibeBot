@@ -34,7 +34,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}        # enables service fetch on Actions
           SCRAPER_PROVIDER: ${{ vars.SCRAPER_PROVIDER }}         # optional: scrapingant(default)/scraperapi/scrapingbee
-          SCRAPER_PROXY_TYPE: ${{ vars.SCRAPER_PROXY_TYPE }}     # optional: residential(default)/datacenter
+          SCRAPER_PROXY_TYPE: ${{ vars.SCRAPER_PROXY_TYPE }}     # optional: datacenter(default)/residential
+          QUIET_START_HOUR: ${{ vars.QUIET_START_HOUR }}         # optional, Cyprus time, default 1
+          QUIET_END_HOUR: ${{ vars.QUIET_END_HOUR }}             # optional, Cyprus time, default 6
         run: python bot.py
 
       - name: Persist state

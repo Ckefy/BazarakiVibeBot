@@ -27,6 +27,16 @@ SUB_DAYS = 30           # subscription length / renew length
 MAX_SEEN = 600          # cap stored ids per subscription
 MAX_SEND_PER_RUN = 15   # avoid flooding on a single run
 
+# Quiet hours (Cyprus local time): no Bazaraki/scraping-API requests in this window.
+QUIET_START = int(os.environ.get("QUIET_START_HOUR") or "1")   # 01:00
+QUIET_END = int(os.environ.get("QUIET_END_HOUR") or "6")       # 06:00
+
+try:
+    from zoneinfo import ZoneInfo
+    _CYPRUS_TZ = ZoneInfo("Asia/Nicosia")
+except Exception:  # noqa: BLE001 - fall back to EEST if tz data is unavailable
+    _CYPRUS_TZ = timezone(timedelta(hours=3))
+
 URL_RE = re.compile(r"https?://\S+")
 
 WELCOME = (
@@ -159,14 +169,19 @@ def create_subscription(state, chat_id, url):
     }
 
     # Seed current listings so we don't spam the whole page on the first poll.
-    try:
-        listings = fetch_listings(url)
-        sub["seen_ids"] = [lid for lid, _ in listings][:MAX_SEEN]
-        sub["seeded"] = True
-        seeded_note = "Сейчас в выдаче {} объявлений — пришлю только то, что появится позже.".format(len(listings))
-    except Exception as exc:  # noqa: BLE001 - report any fetch failure to the user
-        seeded_note = "(не удалось сразу прочитать выдачу, попробую при следующей проверке)"
-        print("Seed failed for {}: {}".format(url, exc), file=sys.stderr)
+    # During quiet hours we don't touch the scraping API — seeding is deferred.
+    if _is_quiet_hours():
+        seeded_note = ("Ночью (с {:02d}:00 до {:02d}:00 по Кипру) выдачу не читаю — "
+                       "начну отслеживать после {:02d}:00.").format(QUIET_START, QUIET_END, QUIET_END)
+    else:
+        try:
+            listings = fetch_listings(url)
+            sub["seen_ids"] = [lid for lid, _ in listings][:MAX_SEEN]
+            sub["seeded"] = True
+            seeded_note = "Сейчас в выдаче {} объявлений — пришлю только то, что появится позже.".format(len(listings))
+        except Exception as exc:  # noqa: BLE001 - report any fetch failure to the user
+            seeded_note = "(не удалось сразу прочитать выдачу, попробую при следующей проверке)"
+            print("Seed failed for {}: {}".format(url, exc), file=sys.stderr)
 
     state["subscriptions"].append(sub)
     send(chat_id,
@@ -189,6 +204,10 @@ def send_subscription_list(state, chat_id):
 # --- polling subscriptions ---------------------------------------------------
 
 def poll_subscriptions(state):
+    if _is_quiet_hours():
+        print("Quiet hours in Cyprus ({:02d}:00-{:02d}:00) — skipping scraping.".format(
+            QUIET_START, QUIET_END))
+        return
     now = _now()
     for sub in state["subscriptions"]:
         if not sub.get("active"):
@@ -233,6 +252,14 @@ def _handle_expired(sub):
 
 
 # --- helpers -----------------------------------------------------------------
+
+def _is_quiet_hours():
+    hour = datetime.now(_CYPRUS_TZ).hour
+    if QUIET_START <= QUIET_END:
+        return QUIET_START <= hour < QUIET_END
+    # window wraps past midnight (e.g. 23:00-06:00)
+    return hour >= QUIET_START or hour < QUIET_END
+
 
 def _find_sub(state, sub_id):
     for sub in state["subscriptions"]:
