@@ -30,13 +30,18 @@ MAX_SEND_PER_RUN = 15   # avoid flooding on a single run
 
 # Telegram updates are handled on every run (cheap, keeps the bot responsive),
 # but the Bazaraki search runs at most once per this interval (saves credits).
-POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES") or "60")
+POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES") or "30")
 
 # If > 0, keep long-polling Telegram for this many seconds before exiting (near
 # real-time replies). The cron restarts the job to give continuous coverage.
 # 0 = single-shot (process pending updates once and exit).
 LOOP_SECONDS = int(os.environ.get("LOOP_SECONDS") or "0")
 LONG_POLL_TIMEOUT = 25  # seconds Telegram holds the getUpdates connection
+
+# Access control: the owner approves who may use the bot. If OWNER_CHAT_ID is set
+# it pins the owner; otherwise the first person who ever messages the bot becomes
+# the owner automatically (it's their bot).
+OWNER_CHAT_ID = (os.environ.get("OWNER_CHAT_ID") or "").strip()
 
 # Quiet hours (Cyprus local time): no Bazaraki/scraping-API requests in this window.
 QUIET_START = int(os.environ.get("QUIET_START_HOUR") or "1")   # 01:00
@@ -67,6 +72,7 @@ def main():
         print("ERROR: TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
     state = load_state()
+    _migrate_users(state)
 
     if LOOP_SECONDS <= 0:
         process_updates(state)
@@ -130,6 +136,27 @@ def handle_message(state, message):
     if not text:
         return
 
+    _register_user(state, message)
+    status = _access_status(state, chat_id)
+
+    if status == "new":
+        _set_user_status(state, chat_id, "pending")
+        _notify_owner_request(state, chat_id)
+        send(chat_id, "👋 Привет! Доступ к этому боту по одобрению. "
+                      "Запрос отправлен владельцу — подожди, пожалуйста ⏳")
+        return
+    if status == "pending":
+        send(chat_id, "Доступ ещё не одобрен. Подожди одобрения владельца ⏳")
+        return
+    if status == "denied":
+        send(chat_id, "Доступ к боту закрыт.")
+        return
+
+    # Owner-only command to review pending requests.
+    if status == "owner" and text.startswith("/pending"):
+        send_pending_list(state, chat_id)
+        return
+
     if text.startswith("/start") or text.startswith("/help"):
         send(chat_id, WELCOME)
         return
@@ -150,7 +177,19 @@ def handle_callback(state, callback):
     chat_id = callback["message"]["chat"]["id"]
     cb_id = callback["id"]
 
-    action, _, sub_id = data.partition(":")
+    action, _, arg = data.partition(":")
+
+    # Owner approving/denying an access request.
+    if action in ("approve", "deny"):
+        _handle_access_decision(state, chat_id, cb_id, action, arg)
+        return
+
+    # Everything else requires an approved user.
+    if _access_status(state, chat_id) not in ("owner", "allowed"):
+        tg("answerCallbackQuery", callback_query_id=cb_id, text="Нет доступа")
+        return
+
+    sub_id = arg
     sub = _find_sub(state, sub_id)
 
     if sub is None or sub["chat_id"] != chat_id:
@@ -225,6 +264,141 @@ def send_subscription_list(state, chat_id):
              keyboard=sub_keyboard(sub["id"]))
 
 
+# --- access control ----------------------------------------------------------
+
+def _migrate_users(state):
+    """Grandfather existing subscribers as allowed (first one as owner) so the
+    approval feature doesn't lock out people who subscribed before it existed."""
+    if state.get("users"):
+        return
+    users = {}
+    owner_set = False
+    for sub in state.get("subscriptions", []):
+        cid = str(sub["chat_id"])
+        if cid in users:
+            continue
+        users[cid] = {"status": "allowed"}
+        if not owner_set and not OWNER_CHAT_ID:
+            users[cid]["is_owner"] = True
+            owner_set = True
+    if users:
+        state["users"] = users
+
+
+def _register_user(state, message):
+    users = state.setdefault("users", {})
+    rec = users.setdefault(str(message["chat"]["id"]), {"status": "new"})
+    frm = message.get("from", {})
+    name = " ".join(x for x in [frm.get("first_name"), frm.get("last_name")] if x)
+    if name:
+        rec["name"] = name
+    if frm.get("username"):
+        rec["username"] = frm["username"]
+
+
+def _get_owner_id(state):
+    if OWNER_CHAT_ID:
+        return int(OWNER_CHAT_ID)
+    for cid, rec in state.get("users", {}).items():
+        if rec.get("is_owner"):
+            return int(cid)
+    return None
+
+
+def _make_owner(state, chat_id):
+    rec = state.setdefault("users", {}).setdefault(str(chat_id), {})
+    rec["is_owner"] = True
+    rec["status"] = "allowed"
+
+
+def _access_status(state, chat_id):
+    """Returns one of: owner, allowed, pending, denied, new. May bootstrap owner."""
+    owner = _get_owner_id(state)
+    if owner is None or chat_id == owner:
+        _make_owner(state, chat_id)
+        return "owner"
+    rec = state.get("users", {}).get(str(chat_id))
+    if not rec or rec.get("status") in (None, "new"):
+        return "new"
+    return rec["status"]
+
+
+def _is_allowed(state, chat_id):
+    """Read-only allow check (no side effects) — used while polling."""
+    owner = _get_owner_id(state)
+    if owner is not None and chat_id == owner:
+        return True
+    rec = state.get("users", {}).get(str(chat_id))
+    return bool(rec and rec.get("status") == "allowed")
+
+
+def _set_user_status(state, chat_id, status):
+    rec = state.setdefault("users", {}).setdefault(str(chat_id), {})
+    rec["status"] = status
+    if status == "pending" and "requested_at" not in rec:
+        rec["requested_at"] = _now().isoformat()
+
+
+def _user_label(rec, chat_id):
+    parts = []
+    if rec.get("name"):
+        parts.append(rec["name"])
+    if rec.get("username"):
+        parts.append("@" + rec["username"])
+    parts.append("(id {})".format(chat_id))
+    return " ".join(parts)
+
+
+def _notify_owner_request(state, requester_chat_id):
+    owner = _get_owner_id(state)
+    if owner is None or owner == requester_chat_id:
+        return
+    rec = state.get("users", {}).get(str(requester_chat_id), {})
+    keyboard = [[
+        {"text": "✅ Разрешить", "callback_data": "approve:{}".format(requester_chat_id)},
+        {"text": "⛔ Отклонить", "callback_data": "deny:{}".format(requester_chat_id)},
+    ]]
+    send(owner, "🔐 Запрос доступа от {}.\nРазрешить пользоваться ботом?".format(
+        _user_label(rec, requester_chat_id)), keyboard=keyboard)
+
+
+def _handle_access_decision(state, presser_chat_id, cb_id, action, arg):
+    if presser_chat_id != _get_owner_id(state):
+        tg("answerCallbackQuery", callback_query_id=cb_id, text="Только владелец")
+        return
+    try:
+        target = int(arg)
+    except ValueError:
+        tg("answerCallbackQuery", callback_query_id=cb_id)
+        return
+
+    rec = state.get("users", {}).get(str(target), {})
+    if action == "approve":
+        _set_user_status(state, target, "allowed")
+        tg("answerCallbackQuery", callback_query_id=cb_id, text="Доступ открыт")
+        send(presser_chat_id, "✅ Доступ открыт: {}".format(_user_label(rec, target)))
+        send(target, "✅ Тебе открыли доступ! Пришли ссылку с bazaraki.com, чтобы подписаться. /help")
+    else:
+        _set_user_status(state, target, "denied")
+        tg("answerCallbackQuery", callback_query_id=cb_id, text="Отклонено")
+        send(presser_chat_id, "⛔ Отклонён: {}".format(_user_label(rec, target)))
+        send(target, "К сожалению, доступ к боту не предоставлен.")
+
+
+def send_pending_list(state, owner_chat_id):
+    pending = [(cid, rec) for cid, rec in state.get("users", {}).items()
+               if rec.get("status") == "pending"]
+    if not pending:
+        send(owner_chat_id, "Нет ожидающих запросов.")
+        return
+    for cid, rec in pending:
+        keyboard = [[
+            {"text": "✅ Разрешить", "callback_data": "approve:" + cid},
+            {"text": "⛔ Отклонить", "callback_data": "deny:" + cid},
+        ]]
+        send(owner_chat_id, "🔐 Ожидает: {}".format(_user_label(rec, int(cid))), keyboard=keyboard)
+
+
 # --- polling subscriptions ---------------------------------------------------
 
 def poll_subscriptions(state):
@@ -245,6 +419,8 @@ def poll_subscriptions(state):
     for sub in state["subscriptions"]:
         if not sub.get("active"):
             continue
+        if not _is_allowed(state, sub["chat_id"]):
+            continue  # user revoked/denied — stop sending
 
         if _parse(sub["expires_at"]) <= now:
             _handle_expired(sub)
