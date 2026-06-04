@@ -11,6 +11,7 @@ Requires the TELEGRAM_BOT_TOKEN environment variable.
 """
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -37,6 +38,9 @@ POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES") or "30")
 # 0 = single-shot (process pending updates once and exit).
 LOOP_SECONDS = int(os.environ.get("LOOP_SECONDS") or "0")
 LONG_POLL_TIMEOUT = 25  # seconds Telegram holds the getUpdates connection
+# Inside a long loop, commit state.json to git this often so a killed job keeps
+# its progress (only active when GIT_PERSIST=1, i.e. on GitHub Actions).
+GIT_PERSIST_SECONDS = int(os.environ.get("GIT_PERSIST_SECONDS") or "180")
 
 # Access control: the owner approves who may use the bot. If OWNER_CHAT_ID is set
 # it pins the owner; otherwise the first person who ever messages the bot becomes
@@ -81,11 +85,18 @@ def main():
         return
 
     # Long-poll loop: replies are near-instant; the search stays rate-limited.
+    # A long window means a queued (pending) run is ready to take over the instant
+    # this one ends, so coverage survives GitHub's unreliable cron scheduling.
     deadline = time.monotonic() + LOOP_SECONDS
+    last_persist = time.monotonic()
     while time.monotonic() < deadline:
         process_updates(state, long_poll=LONG_POLL_TIMEOUT)
         poll_subscriptions(state)
         save_state(state)
+        if time.monotonic() - last_persist >= GIT_PERSIST_SECONDS:
+            _git_persist()
+            last_persist = time.monotonic()
+    _git_persist()  # final flush before this run hands off to the next
 
 
 # --- Telegram API ------------------------------------------------------------
@@ -475,6 +486,23 @@ def _find_sub(state, sub_id):
         if sub["id"] == sub_id:
             return sub
     return None
+
+
+def _git_persist():
+    """Commit & push state.json mid-loop so a killed job keeps its progress.
+    Best-effort and a no-op unless GIT_PERSIST=1 (set by the workflow)."""
+    if not os.environ.get("GIT_PERSIST"):
+        return
+    ident = ["-c", "user.name=bazaraki-bot", "-c", "user.email=bot@users.noreply.github.com"]
+    try:
+        if subprocess.run(["git", "diff", "--quiet", "--", "state.json"]).returncode == 0:
+            return  # nothing changed since last persist
+        subprocess.run(["git"] + ident + ["add", "state.json"], check=False, capture_output=True)
+        subprocess.run(["git"] + ident + ["commit", "-m", "Update state [skip ci]"],
+                       check=False, capture_output=True)
+        subprocess.run(["git", "push"], check=False, capture_output=True)
+    except Exception as exc:  # noqa: BLE001 - persistence must never crash the bot
+        print("git persist failed: {}".format(exc), file=sys.stderr)
 
 
 def _now():

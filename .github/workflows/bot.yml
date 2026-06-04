@@ -2,10 +2,11 @@ name: bazaraki-bot
 
 on:
   schedule:
-    # Every 5 min (GitHub's minimum). Each run long-polls Telegram for ~4.5 min
-    # (LOOP_SECONDS) for near real-time replies; the Bazaraki search itself is
-    # rate-limited in code to once per hour. Needs a PUBLIC repo (unlimited
-    # Actions minutes) — on a private repo this would blow past the free 2000 min.
+    # Every 5 min. Each run long-polls Telegram for ~50 min (LOOP_SECONDS). Because
+    # the window is long, at least one cron tick lands inside it and queues the next
+    # run (concurrency = pending), which starts the instant this one ends — so
+    # coverage is near-continuous despite GitHub's unreliable cron scheduling.
+    # Needs a PUBLIC repo (Actions minutes are unlimited there).
     - cron: "*/5 * * * *"
   workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
 
@@ -20,7 +21,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 6   # safety cap; the loop self-exits after LOOP_SECONDS
+    timeout-minutes: 55   # safety cap; the loop self-exits after LOOP_SECONDS (~50 min)
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +40,8 @@ jobs:
           SCRAPER_PROXY_TYPE: ${{ vars.SCRAPER_PROXY_TYPE }}     # optional: datacenter(default)/residential
           QUIET_START_HOUR: ${{ vars.QUIET_START_HOUR }}         # optional, Cyprus time, default 1
           QUIET_END_HOUR: ${{ vars.QUIET_END_HOUR }}             # optional, Cyprus time, default 6
-          LOOP_SECONDS: "270"                                    # long-poll ~4.5 min per run, then exit
+          LOOP_SECONDS: "3000"                                   # long-poll ~50 min per run, then hand off
+          GIT_PERSIST: "1"                                       # commit state mid-loop so kills don't lose progress
           POLL_INTERVAL_MINUTES: ${{ vars.POLL_INTERVAL_MINUTES }}  # optional, default 30
           OWNER_CHAT_ID: ${{ vars.OWNER_CHAT_ID }}                 # optional: pin the owner; else first contact
         run: python bot.py
