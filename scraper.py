@@ -72,7 +72,7 @@ def _get_via_cloudscraper(url):
 
 
 def _get_via_service(url, api_key):
-    provider = os.environ.get("SCRAPER_PROVIDER", "scrapingant").strip().lower()
+    provider = (os.environ.get("SCRAPER_PROVIDER") or "scrapingant").strip().lower()
     endpoint = _build_service_url(provider, url, api_key)
     response = requests.get(endpoint, headers={"User-Agent": _UA}, timeout=120)
     response.raise_for_status()
@@ -84,7 +84,7 @@ def _build_service_url(provider, url, api_key):
 
     if provider == "scrapingant":
         # browser=true renders JS; residential proxy is needed to pass Cloudflare.
-        proxy_type = os.environ.get("SCRAPER_PROXY_TYPE", "residential")
+        proxy_type = (os.environ.get("SCRAPER_PROXY_TYPE") or "residential")
         return "https://api.scrapingant.com/v2/general?" + urllib.parse.urlencode({
             "url": url, "x-api-key": api_key, "browser": "true", "proxy_type": proxy_type,
         })

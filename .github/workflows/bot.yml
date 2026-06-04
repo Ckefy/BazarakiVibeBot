@@ -30,7 +30,9 @@ jobs:
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}   # optional fallback
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}        # enables service fetch on Actions
+          SCRAPER_PROVIDER: ${{ vars.SCRAPER_PROVIDER }}         # optional: scrapingant(default)/scraperapi/scrapingbee
+          SCRAPER_PROXY_TYPE: ${{ vars.SCRAPER_PROXY_TYPE }}     # optional: residential(default)/datacenter
         run: python bot.py
 
       - name: Persist state
