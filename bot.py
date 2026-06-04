@@ -27,6 +27,10 @@ SUB_DAYS = 30           # subscription length / renew length
 MAX_SEEN = 600          # cap stored ids per subscription
 MAX_SEND_PER_RUN = 15   # avoid flooding on a single run
 
+# Telegram updates are handled on every run (cheap, keeps the bot responsive),
+# but the Bazaraki search runs at most once per this interval (saves credits).
+POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES") or "60")
+
 # Quiet hours (Cyprus local time): no Bazaraki/scraping-API requests in this window.
 QUIET_START = int(os.environ.get("QUIET_START_HOUR") or "1")   # 01:00
 QUIET_END = int(os.environ.get("QUIET_END_HOUR") or "6")       # 06:00
@@ -209,7 +213,16 @@ def poll_subscriptions(state):
         print("Quiet hours in Cyprus ({:02d}:00-{:02d}:00) — skipping scraping.".format(
             QUIET_START, QUIET_END))
         return
+
     now = _now()
+    last = state.get("last_poll_at")
+    if last and (now - _parse(last)) < timedelta(minutes=POLL_INTERVAL_MINUTES):
+        print("Last search was < {} min ago — skipping (Telegram still handled).".format(
+            POLL_INTERVAL_MINUTES))
+        return
+    # Mark the poll time up front so frequent runs don't all fetch on transient errors.
+    state["last_poll_at"] = now.isoformat()
+
     for sub in state["subscriptions"]:
         if not sub.get("active"):
             continue
