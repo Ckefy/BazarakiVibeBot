@@ -20,11 +20,9 @@ import re
 import urllib.parse
 
 import requests
+from bs4 import BeautifulSoup
 
 BASE = "https://www.bazaraki.com"
-
-# Matches hrefs like: /adv/6426567_3-bedroom-apartment-to-rent/
-LISTING_RE = re.compile(r"/adv/(\d+)_[^\"'?#<>\s]*")
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -33,22 +31,48 @@ _UA = (
 
 
 def fetch_listings(url):
-    """Return a list of (listing_id:int, full_url:str) in page order (newest first)."""
+    """Return a list of (listing_id:int, full_url:str) in page order (newest first).
+
+    Only the actual search results are returned. Bazaraki pages also contain
+    "similar"/"recommended" carousels with unrelated ads (e.g. studios in a
+    3-bedroom search); those live OUTSIDE the results container and are ignored.
+    """
     html_text = _get_html(url)
     if _looks_like_challenge(html_text):
         raise RuntimeError("Cloudflare challenge was not solved (blocked).")
+    return _parse_listings(html_text)
+
+
+def _parse_listings(html_text):
+    soup = BeautifulSoup(html_text, "html.parser")
+
+    # Real results live in <div id="listing" class="items-listing">. Restrict to it
+    # so recommendation/VIP blocks elsewhere on the page are excluded.
+    container = soup.select_one("#listing") or soup.select_one("div.items-listing") or soup
 
     seen = set()
     listings = []
-    for match in LISTING_RE.finditer(html_text):
-        listing_id = int(match.group(1))
+    for card in container.select("div.advert.js-item-listing[data-id]"):
+        data_id = card.get("data-id", "")
+        if not data_id.isdigit():
+            continue
+        listing_id = int(data_id)
         if listing_id in seen:
             continue
         seen.add(listing_id)
-        path = match.group(0)
-        full = BASE + path if path.startswith("/") else path
-        listings.append((listing_id, full))
+        listings.append((listing_id, _card_url(card, data_id)))
     return listings
+
+
+def _card_url(card, data_id):
+    """Pick the canonical /adv/ link (with slug) from a result card."""
+    pattern = re.compile(r"/adv/{}[_/]".format(data_id))
+    for a in card.select("a[href*='/adv/']"):
+        href = a.get("href", "")
+        if pattern.search(href):
+            return BASE + href if href.startswith("/") else href
+    # Fallback: canonical URL without the slug (Bazaraki redirects to the full one).
+    return "{}/adv/{}/".format(BASE, data_id)
 
 
 # --- private helpers ---------------------------------------------------------
