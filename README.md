@@ -64,13 +64,29 @@ GitHub → твой репозиторий → **Settings → Secrets and variab
 
 ### 4. Включи Actions
 GitHub → вкладка **Actions** → если просит — нажми «I understand my workflows, enable them».
-Workflow `bazaraki-bot` запускается каждые 5 минут и в каждом запуске ~4.5 минуты
-«слушает» Telegram (ответы — почти сразу). Сам поиск Bazaraki при этом идёт **не чаще
-раза в 30 минут** (`POLL_INTERVAL_MINUTES`, по умолчанию 30). Запуск вручную:
-**Actions → bazaraki-bot → Run workflow**.
+Каждый запуск ~50 минут «слушает» Telegram (ответы почти сразу) и в конце сам триггерит
+следующий — так покрытие непрерывно, не завязано на ненадёжный cron GitHub. Поиск Bazaraki
+идёт **не чаще раза в 30 минут** (`POLL_INTERVAL_MINUTES`). Запуск вручную:
+**Actions → bazaraki-bot → Run workflow** (им же запускается «цепочка» в первый раз).
 
 > ⚠️ Дай боту права на запись: **Settings → Actions → General → Workflow permissions →
 > Read and write permissions** (нужно, чтобы коммитить `state.json` обратно).
+
+### 4b. PAT для самоперезапуска (обязательно для непрерывности)
+Cron в GitHub Actions ненадёжен и может вообще не срабатывать, поэтому бот перезапускает
+себя сам. Запуск, инициированный встроенным `GITHUB_TOKEN`, **не** стартует новый workflow —
+нужен личный токен:
+
+1. GitHub → **Settings (профиля) → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**.
+2. **Repository access** → Only select repositories → этот репозиторий.
+3. **Permissions → Repository →** `Actions`: **Read and write**, `Contents`: Read,
+   `Metadata`: Read. Срок — на свой вкус.
+4. Скопируй токен и добавь его секретом репозитория: **Settings → Secrets and variables →
+   Actions → New repository secret**, имя **`DISPATCH_PAT`**.
+
+Без `DISPATCH_PAT` бот будет полагаться только на cron (и, как видно на практике, может
+простаивать). Чтобы запустить цепочку — один раз нажми **Run workflow**.
 
 ### 5. Пользуйся
 1. Найди своего бота в Telegram по username, нажми **Start**.

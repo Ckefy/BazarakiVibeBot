@@ -59,3 +59,17 @@ jobs:
           else
             echo "No state changes to commit."
           fi
+
+      # Chain the next run ourselves — GitHub's cron is unreliable and may never
+      # fire. A PAT is required: runs triggered by the default GITHUB_TOKEN do not
+      # start new workflow runs. Without DISPATCH_PAT we silently fall back to cron.
+      - name: Keep alive (trigger next run)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_PAT }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            gh workflow run bot.yml --ref "${GITHUB_REF_NAME}" && echo "Next run dispatched."
+          else
+            echo "No DISPATCH_PAT secret set — relying on cron only (unreliable)."
+          fi
