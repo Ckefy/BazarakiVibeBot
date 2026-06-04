@@ -147,7 +147,6 @@ def handle_message(state, message):
     if not text:
         return
 
-    _register_user(state, message)
     status = _access_status(state, chat_id)
 
     if status == "new":
@@ -296,17 +295,6 @@ def _migrate_users(state):
         state["users"] = users
 
 
-def _register_user(state, message):
-    users = state.setdefault("users", {})
-    rec = users.setdefault(str(message["chat"]["id"]), {"status": "new"})
-    frm = message.get("from", {})
-    name = " ".join(x for x in [frm.get("first_name"), frm.get("last_name")] if x)
-    if name:
-        rec["name"] = name
-    if frm.get("username"):
-        rec["username"] = frm["username"]
-
-
 def _get_owner_id(state):
     if OWNER_CHAT_ID:
         return int(OWNER_CHAT_ID)
@@ -350,27 +338,20 @@ def _set_user_status(state, chat_id, status):
         rec["requested_at"] = _now().isoformat()
 
 
-def _user_label(rec, chat_id):
-    parts = []
-    if rec.get("name"):
-        parts.append(rec["name"])
-    if rec.get("username"):
-        parts.append("@" + rec["username"])
-    parts.append("(id {})".format(chat_id))
-    return " ".join(parts)
+def _user_label(chat_id):
+    return "пользователь id {}".format(chat_id)
 
 
 def _notify_owner_request(state, requester_chat_id):
     owner = _get_owner_id(state)
     if owner is None or owner == requester_chat_id:
         return
-    rec = state.get("users", {}).get(str(requester_chat_id), {})
     keyboard = [[
         {"text": "✅ Разрешить", "callback_data": "approve:{}".format(requester_chat_id)},
         {"text": "⛔ Отклонить", "callback_data": "deny:{}".format(requester_chat_id)},
     ]]
     send(owner, "🔐 Запрос доступа от {}.\nРазрешить пользоваться ботом?".format(
-        _user_label(rec, requester_chat_id)), keyboard=keyboard)
+        _user_label(requester_chat_id)), keyboard=keyboard)
 
 
 def _handle_access_decision(state, presser_chat_id, cb_id, action, arg):
@@ -383,16 +364,15 @@ def _handle_access_decision(state, presser_chat_id, cb_id, action, arg):
         tg("answerCallbackQuery", callback_query_id=cb_id)
         return
 
-    rec = state.get("users", {}).get(str(target), {})
     if action == "approve":
         _set_user_status(state, target, "allowed")
         tg("answerCallbackQuery", callback_query_id=cb_id, text="Доступ открыт")
-        send(presser_chat_id, "✅ Доступ открыт: {}".format(_user_label(rec, target)))
+        send(presser_chat_id, "✅ Доступ открыт: {}".format(_user_label(target)))
         send(target, "✅ Тебе открыли доступ! Пришли ссылку с bazaraki.com, чтобы подписаться. /help")
     else:
         _set_user_status(state, target, "denied")
         tg("answerCallbackQuery", callback_query_id=cb_id, text="Отклонено")
-        send(presser_chat_id, "⛔ Отклонён: {}".format(_user_label(rec, target)))
+        send(presser_chat_id, "⛔ Отклонён: {}".format(_user_label(target)))
         send(target, "К сожалению, доступ к боту не предоставлен.")
 
 
@@ -402,12 +382,12 @@ def send_pending_list(state, owner_chat_id):
     if not pending:
         send(owner_chat_id, "Нет ожидающих запросов.")
         return
-    for cid, rec in pending:
+    for cid, _rec in pending:
         keyboard = [[
             {"text": "✅ Разрешить", "callback_data": "approve:" + cid},
             {"text": "⛔ Отклонить", "callback_data": "deny:" + cid},
         ]]
-        send(owner_chat_id, "🔐 Ожидает: {}".format(_user_label(rec, int(cid))), keyboard=keyboard)
+        send(owner_chat_id, "🔐 Ожидает: {}".format(_user_label(int(cid))), keyboard=keyboard)
 
 
 # --- polling subscriptions ---------------------------------------------------
