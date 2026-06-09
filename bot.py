@@ -392,6 +392,17 @@ def send_pending_list(state, owner_chat_id):
 
 # --- polling subscriptions ---------------------------------------------------
 
+def _dedupe(ids):
+    """De-duplicate a list of ids preserving first-seen order."""
+    seen = set()
+    out = []
+    for i in ids:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
 def poll_subscriptions(state):
     if _is_quiet_hours():
         print("Quiet hours in Cyprus ({:02d}:00-{:02d}:00) — skipping scraping.".format(
@@ -435,9 +446,11 @@ def poll_subscriptions(state):
         for lid, link in reversed(new[:MAX_SEND_PER_RUN]):
             send(sub["chat_id"], "🆕 Новое объявление:\n{}".format(link))
 
-        if new:
-            fresh_ids = [lid for lid, _ in listings]
-            sub["seen_ids"] = (fresh_ids + sub.get("seen_ids", []))[:MAX_SEEN]
+        # Refresh seen_ids: current page first, then older ones, de-duplicated.
+        # (Also heals any duplicates left by the previous buggy merge.)
+        merged = _dedupe([lid for lid, _ in listings] + sub.get("seen_ids", []))[:MAX_SEEN]
+        if merged != sub.get("seen_ids"):
+            sub["seen_ids"] = merged
 
 
 def _handle_expired(sub):
