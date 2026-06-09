@@ -483,17 +483,26 @@ def _find_sub(state, sub_id):
 
 def _git_persist():
     """Commit & push state.json mid-loop so a killed job keeps its progress.
-    Best-effort and a no-op unless GIT_PERSIST=1 (set by the workflow)."""
+    Best-effort and a no-op unless GIT_PERSIST=1 (set by the workflow).
+
+    Pulls (rebase) before pushing so a moved remote doesn't silently reject the
+    push — otherwise seen_ids would never reach GitHub and listings get re-sent.
+    """
     if not os.environ.get("GIT_PERSIST"):
         return
     ident = ["-c", "user.name=bazaraki-bot", "-c", "user.email=bot@users.noreply.github.com"]
+    branch = os.environ.get("GITHUB_REF_NAME", "main")
     try:
         if subprocess.run(["git", "diff", "--quiet", "--", "state.json"]).returncode == 0:
             return  # nothing changed since last persist
         subprocess.run(["git"] + ident + ["add", "state.json"], check=False, capture_output=True)
         subprocess.run(["git"] + ident + ["commit", "-m", "Update state [skip ci]"],
                        check=False, capture_output=True)
-        subprocess.run(["git", "push"], check=False, capture_output=True)
+        subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", branch],
+                       check=False, capture_output=True)
+        push = subprocess.run(["git", "push"], capture_output=True, text=True)
+        if push.returncode != 0:
+            print("git persist push failed: {}".format(push.stderr.strip()), file=sys.stderr)
     except Exception as exc:  # noqa: BLE001 - persistence must never crash the bot
         print("git persist failed: {}".format(exc), file=sys.stderr)
 
