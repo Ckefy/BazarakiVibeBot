@@ -91,9 +91,11 @@ def main():
     last_persist = time.monotonic()
     while time.monotonic() < deadline:
         process_updates(state, long_poll=LONG_POLL_TIMEOUT)
-        poll_subscriptions(state)
+        sent_any = poll_subscriptions(state)
         save_state(state)
-        if time.monotonic() - last_persist >= GIT_PERSIST_SECONDS:
+        # Persist to git immediately after sending so a crash/overlap can't re-send;
+        # otherwise on the regular interval.
+        if sent_any or time.monotonic() - last_persist >= GIT_PERSIST_SECONDS:
             _git_persist()
             last_persist = time.monotonic()
     _git_persist()  # final flush before this run hands off to the next
@@ -404,20 +406,22 @@ def _dedupe(ids):
 
 
 def poll_subscriptions(state):
+    """Poll due subscriptions. Returns True if at least one listing was sent."""
     if _is_quiet_hours():
         print("Quiet hours in Cyprus ({:02d}:00-{:02d}:00) — skipping scraping.".format(
             QUIET_START, QUIET_END))
-        return
+        return False
 
     now = _now()
     last = state.get("last_poll_at")
     if last and (now - _parse(last)) < timedelta(minutes=POLL_INTERVAL_MINUTES):
         print("Last search was < {} min ago — skipping (Telegram still handled).".format(
             POLL_INTERVAL_MINUTES))
-        return
+        return False
     # Mark the poll time up front so frequent runs don't all fetch on transient errors.
     state["last_poll_at"] = now.isoformat()
 
+    sent_any = False
     for sub in state["subscriptions"]:
         if not sub.get("active"):
             continue
@@ -445,12 +449,15 @@ def poll_subscriptions(state):
         new = [(lid, link) for lid, link in listings if lid not in seen]
         for lid, link in reversed(new[:MAX_SEND_PER_RUN]):
             send(sub["chat_id"], "🆕 Новое объявление:\n{}".format(link))
+            sent_any = True
 
         # Refresh seen_ids: current page first, then older ones, de-duplicated.
         # (Also heals any duplicates left by the previous buggy merge.)
         merged = _dedupe([lid for lid, _ in listings] + sub.get("seen_ids", []))[:MAX_SEEN]
         if merged != sub.get("seen_ids"):
             sub["seen_ids"] = merged
+
+    return sent_any
 
 
 def _handle_expired(sub):
