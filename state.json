@@ -1,5 +1,5 @@
 {
-  "update_offset": 279069217,
+  "update_offset": 279069221,
   "subscriptions": [
     {
       "id": "fbd03b00",
@@ -7,7 +7,7 @@
       "url": "https://bazaraki.com/real-estate-to-rent/apartments-flats/number-of-bedrooms---2/number-of-bedrooms---3/?price_max=2200&lat=34.689610280899075&lng=33.043701084033316&radius=2000&ordering=newest",
       "created_at": "2026-06-04T12:37:19.458186+00:00",
       "expires_at": "2026-07-04T12:37:19.458186+00:00",
-      "active": true,
+      "active": false,
       "seeded": true,
       "expiry_notified": false,
       "seen_ids": [
@@ -33,7 +33,6 @@
         6549778,
         6503397,
         6557671,
-        6547239,
         6549777,
         6513073,
         6558587,
@@ -71,12 +70,13 @@
         6510818,
         6510819,
         6564185,
+        6564166,
+        6547239,
         6556703,
         6554976,
         6224242,
         6556334,
         6544021,
-        6564166,
         6564217,
         6510480,
         6556872,
@@ -413,5 +413,5 @@
       "requested_at": "2026-06-04T12:27:03.853877+00:00"
     }
   },
-  "last_poll_at": "2026-06-21T10:32:52.070779+00:00"
+  "last_poll_at": "2026-06-21T11:03:17.014403+00:00"
 }
